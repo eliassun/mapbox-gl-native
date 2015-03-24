@@ -71,9 +71,6 @@ public:
     // Notifies the Map thread that the state has changed and an update might be necessary.
     void triggerUpdate(Update = Update::Nothing);
 
-    // Triggers a render. Can be called from any thread.
-    void triggerRender();
-
     // Releases resources immediately
     void terminate();
 
@@ -203,7 +200,6 @@ private:
     std::unique_ptr<uv::async> asyncTerminate;
     std::unique_ptr<uv::async> asyncUpdate;
     std::unique_ptr<uv::async> asyncInvoke;
-    std::unique_ptr<uv::async> asyncRender;
 
     bool terminating = false;
     bool pausing = false;

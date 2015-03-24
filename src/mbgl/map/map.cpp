@@ -117,7 +117,7 @@ void Map::start(bool startPaused) {
         terminating = true;
 
         // Closes all open handles on the loop. This means that the loop will automatically terminate.
-        asyncRender.reset();
+        context->asyncRender.reset();
         asyncUpdate.reset();
         asyncInvoke.reset();
         asyncTerminate.reset();
@@ -131,7 +131,7 @@ void Map::start(bool startPaused) {
         processTasks();
     });
 
-    asyncRender = util::make_unique<uv::async>(env->loop, [this] {
+    context->asyncRender = util::make_unique<uv::async>(env->loop, [this] {
         // Must be called in Map thread.
         assert(Environment::currentlyOn(ThreadType::Map));
 
@@ -280,26 +280,11 @@ void Map::renderSync() {
     // Must be called in UI thread.
     assert(Environment::currentlyOn(ThreadType::Main));
 
-    triggerRender();
+    context->triggerRender();
 
     std::unique_lock<std::mutex> lock(mutexRendered);
     condRendered.wait(lock, [this] { return rendered; });
     rendered = false;
-}
-
-void Map::triggerUpdate(const Update u) {
-    updated |= static_cast<UpdateType>(u);
-
-    if (mode == Mode::Static) {
-        prepare();
-    } else if (asyncUpdate) {
-        asyncUpdate->send();
-    }
-}
-
-void Map::triggerRender() {
-    assert(asyncRender);
-    asyncRender->send();
 }
 
 // Runs the function in the map thread.
@@ -631,16 +616,6 @@ LatLngBounds Map::getBoundsForAnnotations(const std::vector<uint32_t>& annotatio
     });
 }
 
-void Map::updateAnnotationTiles(const std::vector<TileID>& ids) {
-    assert(Environment::currentlyOn(ThreadType::Main));
-    if (!context->style) return;
-    for (const auto &source : context->style->sources) {
-        if (source->info.type == SourceType::Annotations) {
-            source->invalidateTiles(ids);
-        }
-    }
-    triggerUpdate();
-}
 
 #pragma mark - Toggles
 
@@ -693,6 +668,29 @@ void Map::setDefaultTransitionDuration(Duration duration) {
 Duration Map::getDefaultTransitionDuration() {
     assert(Environment::currentlyOn(ThreadType::Main));
     return data->getDefaultTransitionDuration();
+}
+
+#pragma mark - Private
+
+void Map::triggerUpdate(const Update u) {
+    updated |= static_cast<UpdateType>(u);
+
+    if (mode == Mode::Static) {
+        prepare();
+    } else if (asyncUpdate) {
+        asyncUpdate->send();
+    }
+}
+
+void Map::updateAnnotationTiles(const std::vector<TileID>& ids) {
+    assert(Environment::currentlyOn(ThreadType::Main));
+    if (!context->style) return;
+    for (const auto &source : context->style->sources) {
+        if (source->info.type == SourceType::Annotations) {
+            source->invalidateTiles(ids);
+        }
+    }
+    triggerUpdate();
 }
 
 void Map::updateTiles() {
