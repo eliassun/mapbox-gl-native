@@ -1,6 +1,8 @@
 #ifndef MBGL_MAP_UPDATE
 #define MBGL_MAP_UPDATE
 
+#include <cstdint>
+
 namespace mbgl {
 
 using UpdateType = uint32_t;

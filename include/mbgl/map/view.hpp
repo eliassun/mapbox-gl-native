@@ -2,6 +2,7 @@
 #define MBGL_MAP_VIEW
 
 #include <mbgl/util/chrono.hpp>
+#include <functional>
 
 namespace mbgl {
 
@@ -37,8 +38,9 @@ public:
     virtual void notify() = 0;
 
     // Called from the render thread. The implementation must trigger a rerender.
-    // (i.e. map->renderSync() or map->renderAsync() must be called as a result of this)
-    virtual void invalidate() = 0;
+    // (i.e. either the passed render() function for rendering immediately on the map thread,
+    // or map->renderSync() from the main thread must be called as a result of this)
+    virtual void invalidate(std::function<void()> render) = 0;
 
     // Notifies a watcher of map x/y/scale/rotation changes.
     // Must only be called from the same thread that caused the change.

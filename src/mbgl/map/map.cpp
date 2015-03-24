@@ -1,4 +1,5 @@
 #include <mbgl/map/map.hpp>
+#include <mbgl/map/update.hpp>
 #include <mbgl/map/environment.hpp>
 #include <mbgl/map/map_context.hpp>
 #include <mbgl/map/view.hpp>
@@ -65,8 +66,7 @@ Map::Map(View& view_, FileSource& fileSource_)
       scope(util::make_unique<EnvironmentScope>(*env, ThreadType::Main, "Main")),
       view(view_),
       data(util::make_unique<MapData>(view_)),
-      context(util::make_unique<MapContext>(*env, *data)),
-      updated(static_cast<UpdateType>(Update::Nothing))
+      context(util::make_unique<MapContext>(*env, view, *data))
 {
     view.initialize(this);
 }
@@ -103,47 +103,7 @@ void Map::start(bool startPaused) {
     // Reset the flag.
     isStopped = false;
 
-    // Setup async notifications
-    asyncTerminate = util::make_unique<uv::async>(env->loop, [this]() {
-        assert(Environment::currentlyOn(ThreadType::Map));
-
-        // Remove all of these to make sure they are destructed in the correct thread.
-        context->style.reset();
-
-        // It's now safe to destroy/join the workers since there won't be any more callbacks that
-        // could dispatch to the worker pool.
-        context->workers.reset();
-
-        terminating = true;
-
-        // Closes all open handles on the loop. This means that the loop will automatically terminate.
-        context->asyncRender.reset();
-        asyncUpdate.reset();
-        asyncInvoke.reset();
-        asyncTerminate.reset();
-    });
-
-    asyncUpdate = util::make_unique<uv::async>(env->loop, [this] {
-        update();
-    });
-
-    asyncInvoke = util::make_unique<uv::async>(env->loop, [this] {
-        processTasks();
-    });
-
-    context->asyncRender = util::make_unique<uv::async>(env->loop, [this] {
-        // Must be called in Map thread.
-        assert(Environment::currentlyOn(ThreadType::Map));
-
-        render();
-
-        // Finally, notify all listeners that we have finished rendering this frame.
-        {
-            std::lock_guard<std::mutex> lk(mutexRendered);
-            rendered = true;
-        }
-        condRendered.notify_all();
-    });
+    context->start();
 
     // Do we need to pause first?
     if (startPaused) {
@@ -162,14 +122,14 @@ void Map::start(bool startPaused) {
         view.notify();
     });
 
-    triggerUpdate();
+    context->triggerUpdate();
 }
 
 void Map::stop(std::function<void ()> callback) {
     assert(Environment::currentlyOn(ThreadType::Main));
     assert(data->mode == MapMode::Continuous);
 
-    asyncTerminate->send();
+    context->terminate();
 
     resume();
 
@@ -200,7 +160,7 @@ void Map::pause(bool waitForPause) {
     mutexRun.unlock();
 
     uv_stop(env->loop);
-    triggerUpdate(); // Needed to ensure uv_stop is seen and uv_run exits, otherwise we deadlock on wait_for_pause
+    context->triggerUpdate(); // Needed to ensure uv_stop is seen and uv_run exits, otherwise we deadlock on wait_for_pause
 
     if (waitForPause) {
         std::unique_lock<std::mutex> lockPause (mutexPause);
@@ -251,11 +211,11 @@ void Map::run() {
     context->workers = util::make_unique<Worker>(env->loop, 4);
 
     setup();
-    prepare();
+    context->prepare();
 
     if (data->mode == MapMode::Continuous) {
-        terminating = false;
-        while(!terminating) {
+        context->terminating = false;
+        while (!context->terminating) {
             uv_run(env->loop, UV_RUN_DEFAULT);
             checkForPause();
         }
@@ -269,7 +229,7 @@ void Map::run() {
     // If the map rendering wasn't started asynchronously, we perform one render
     // *after* all events have been processed.
     if (data->mode == MapMode::Static) {
-        render();
+        context->render();
         data->mode = MapMode::None;
     }
 
@@ -282,45 +242,7 @@ void Map::renderSync() {
 
     context->triggerRender();
 
-    std::unique_lock<std::mutex> lock(mutexRendered);
-    condRendered.wait(lock, [this] { return rendered; });
-    rendered = false;
-}
-
-// Runs the function in the map thread.
-void Map::invokeTask(std::function<void()>&& fn) {
-    {
-        std::lock_guard<std::mutex> lock(mutexTask);
-        tasks.emplace(::std::forward<std::function<void()>>(fn));
-    }
-
-    // TODO: Once we have aligned static and continuous rendering, this should always dispatch
-    // to the async queue.
-    if (asyncInvoke) {
-        asyncInvoke->send();
-    } else {
-        processTasks();
-    }
-}
-
-template <typename Fn> auto Map::invokeSyncTask(const Fn& fn) -> decltype(fn()) {
-    std::promise<decltype(fn())> promise;
-    invokeTask([&fn, &promise] { promise.set_value(fn()); });
-    return promise.get_future().get();
-}
-
-// Processes the functions that should be run in the map thread.
-void Map::processTasks() {
-    std::queue<std::function<void()>> queue;
-    {
-        std::lock_guard<std::mutex> lock(mutexTask);
-        queue.swap(tasks);
-    }
-
-    while (!queue.empty()) {
-        queue.front()();
-        queue.pop();
-    }
+    context->rendered.wait();
 }
 
 void Map::checkForPause() {
@@ -343,10 +265,8 @@ void Map::checkForPause() {
     mutexPause.unlock();
 }
 
-void Map::terminate() {
-    assert(context->painter);
-    context->painter->terminate();
-    view.deactivate();
+void Map::update() {
+    context->triggerUpdate();
 }
 
 #pragma mark - Setup
@@ -373,14 +293,14 @@ void Map::setStyleURL(const std::string &url) {
     }
 
     data->setStyleInfo({ styleURL, base, "" });
-    triggerUpdate(Update::StyleInfo);
+    context->triggerUpdate(Update::StyleInfo);
 }
 
 void Map::setStyleJSON(const std::string& json, const std::string& base) {
     assert(Environment::currentlyOn(ThreadType::Main));
 
     data->setStyleInfo({ "", base, json });
-    triggerUpdate(Update::StyleInfo);
+    context->triggerUpdate(Update::StyleInfo);
 }
 
 std::string Map::getStyleJSON() const {
@@ -395,7 +315,7 @@ void Map::resize(uint16_t width, uint16_t height, float ratio) {
 
 void Map::resize(uint16_t width, uint16_t height, float ratio, uint16_t fbWidth, uint16_t fbHeight) {
     if (data->transform.resize(width, height, ratio, fbWidth, fbHeight)) {
-        triggerUpdate();
+        context->triggerUpdate();
     }
 }
 
@@ -403,24 +323,24 @@ void Map::resize(uint16_t width, uint16_t height, float ratio, uint16_t fbWidth,
 
 void Map::cancelTransitions() {
     data->transform.cancelTransitions();
-    triggerUpdate();
+    context->triggerUpdate();
 }
 
 void Map::setGestureInProgress(bool inProgress) {
     data->transform.setGestureInProgress(inProgress);
-    triggerUpdate();
+    context->triggerUpdate();
 }
 
 #pragma mark - Position
 
 void Map::moveBy(double dx, double dy, Duration duration) {
     data->transform.moveBy(dx, dy, duration);
-    triggerUpdate();
+    context->triggerUpdate();
 }
 
 void Map::setLatLng(LatLng latLng, Duration duration) {
     data->transform.setLatLng(latLng, duration);
-    triggerUpdate();
+    context->triggerUpdate();
 }
 
 LatLng Map::getLatLng() const {
@@ -431,7 +351,7 @@ void Map::resetPosition() {
     data->transform.setAngle(0);
     data->transform.setLatLng(LatLng(0, 0));
     data->transform.setZoom(0);
-    triggerUpdate(Update::Zoom);
+    context->triggerUpdate(Update::Zoom);
 }
 
 
@@ -439,12 +359,12 @@ void Map::resetPosition() {
 
 void Map::scaleBy(double ds, double cx, double cy, Duration duration) {
     data->transform.scaleBy(ds, cx, cy, duration);
-    triggerUpdate(Update::Zoom);
+    context->triggerUpdate(Update::Zoom);
 }
 
 void Map::setScale(double scale, double cx, double cy, Duration duration) {
     data->transform.setScale(scale, cx, cy, duration);
-    triggerUpdate(Update::Zoom);
+    context->triggerUpdate(Update::Zoom);
 }
 
 double Map::getScale() const {
@@ -453,7 +373,7 @@ double Map::getScale() const {
 
 void Map::setZoom(double zoom, Duration duration) {
     data->transform.setZoom(zoom, duration);
-    triggerUpdate(Update::Zoom);
+    context->triggerUpdate(Update::Zoom);
 }
 
 double Map::getZoom() const {
@@ -462,12 +382,23 @@ double Map::getZoom() const {
 
 void Map::setLatLngZoom(LatLng latLng, double zoom, Duration duration) {
     data->transform.setLatLngZoom(latLng, zoom, duration);
-    triggerUpdate(Update::Zoom);
+    context->triggerUpdate(Update::Zoom);
 }
 
 void Map::resetZoom() {
     setZoom(0);
 }
+
+double Map::getMinZoom() const {
+    return data->transform.getMinZoom();
+}
+
+double Map::getMaxZoom() const {
+    return data->transform.getMaxZoom();
+}
+
+
+#pragma mark - Size
 
 uint16_t Map::getWidth() const {
     return data->getTransformState().getWidth();
@@ -482,17 +413,17 @@ uint16_t Map::getHeight() const {
 
 void Map::rotateBy(double sx, double sy, double ex, double ey, Duration duration) {
     data->transform.rotateBy(sx, sy, ex, ey, duration);
-    triggerUpdate();
+    context->triggerUpdate();
 }
 
 void Map::setBearing(double degrees, Duration duration) {
     data->transform.setAngle(-degrees * M_PI / 180, duration);
-    triggerUpdate();
+    context->triggerUpdate();
 }
 
 void Map::setBearing(double degrees, double cx, double cy) {
     data->transform.setAngle(-degrees * M_PI / 180, cx, cy);
-    triggerUpdate();
+    context->triggerUpdate();
 }
 
 double Map::getBearing() const {
@@ -501,20 +432,8 @@ double Map::getBearing() const {
 
 void Map::resetNorth() {
     data->transform.setAngle(0, std::chrono::milliseconds(500));
-    triggerUpdate();
+    context->triggerUpdate();
 }
-
-
-#pragma mark - Rotation
-
-double Map::getMinZoom() const {
-    return data->transform.getMinZoom();
-}
-
-double Map::getMaxZoom() const {
-    return data->transform.getMaxZoom();
-}
-
 
 
 #pragma mark - Access Token
@@ -562,14 +481,14 @@ const LatLng Map::latLngForPixel(const vec2<double> pixel) const {
 
 void Map::setDefaultPointAnnotationSymbol(const std::string& symbol) {
     assert(Environment::currentlyOn(ThreadType::Main));
-    invokeTask([=] {
+    context->invokeTask([=] {
         data->annotationManager.setDefaultPointAnnotationSymbol(symbol);
     });
 }
 
 double Map::getTopOffsetPixelsForAnnotationSymbol(const std::string& symbol) {
     assert(Environment::currentlyOn(ThreadType::Main));
-    return invokeSyncTask([&] {
+    return context->invokeSyncTask([&] {
         assert(context->sprite);
         const SpritePosition pos = context->sprite->getSpritePosition(symbol);
         return -pos.height / pos.pixelRatio / 2;
@@ -582,9 +501,9 @@ uint32_t Map::addPointAnnotation(const LatLng& point, const std::string& symbol)
 
 std::vector<uint32_t> Map::addPointAnnotations(const std::vector<LatLng>& points, const std::vector<std::string>& symbols) {
     assert(Environment::currentlyOn(ThreadType::Main));
-    return invokeSyncTask([&] {
+    return context->invokeSyncTask([&] {
         auto result = data->annotationManager.addPointAnnotations(points, symbols, *data);
-        updateAnnotationTiles(result.first);
+        context->updateAnnotationTiles(result.first);
         return result.second;
     });
 }
@@ -596,22 +515,22 @@ void Map::removeAnnotation(uint32_t annotation) {
 
 void Map::removeAnnotations(const std::vector<uint32_t>& annotations) {
     assert(Environment::currentlyOn(ThreadType::Main));
-    invokeTask([=] {
+    context->invokeTask([=] {
         auto result = data->annotationManager.removeAnnotations(annotations, *data);
-        updateAnnotationTiles(result);
+        context->updateAnnotationTiles(result);
     });
 }
 
 std::vector<uint32_t> Map::getAnnotationsInBounds(const LatLngBounds& bounds) {
     assert(Environment::currentlyOn(ThreadType::Main));
-    return invokeSyncTask([&] {
+    return context->invokeSyncTask([&] {
         return data->annotationManager.getAnnotationsInBounds(bounds, *data);
     });
 }
 
 LatLngBounds Map::getBoundsForAnnotations(const std::vector<uint32_t>& annotations) {
     assert(Environment::currentlyOn(ThreadType::Main));
-    return invokeSyncTask([&] {
+    return context->invokeSyncTask([&] {
         return data->annotationManager.getBoundsForAnnotations(annotations);
     });
 }
@@ -621,12 +540,12 @@ LatLngBounds Map::getBoundsForAnnotations(const std::vector<uint32_t>& annotatio
 
 void Map::setDebug(bool value) {
     data->setDebug(value);
-    triggerUpdate(Update::Debug);
+    context->triggerUpdate(Update::Debug);
 }
 
 void Map::toggleDebug() {
     data->toggleDebug();
-    triggerUpdate(Update::Debug);
+    context->triggerUpdate(Update::Debug);
 }
 
 bool Map::getDebug() const {
@@ -635,19 +554,19 @@ bool Map::getDebug() const {
 
 void Map::addClass(const std::string& klass) {
     if (data->addClass(klass)) {
-        triggerUpdate(Update::Classes);
+        context->triggerUpdate(Update::Classes);
     }
 }
 
 void Map::removeClass(const std::string& klass) {
     if (data->removeClass(klass)) {
-        triggerUpdate(Update::Classes);
+        context->triggerUpdate(Update::Classes);
     }
 }
 
 void Map::setClasses(const std::vector<std::string>& classes) {
     data->setClasses(classes);
-    triggerUpdate(Update::Classes);
+    context->triggerUpdate(Update::Classes);
 }
 
 bool Map::hasClass(const std::string& klass) const {
@@ -662,169 +581,12 @@ void Map::setDefaultTransitionDuration(Duration duration) {
     assert(Environment::currentlyOn(ThreadType::Main));
 
     data->setDefaultTransitionDuration(duration);
-    triggerUpdate(Update::DefaultTransitionDuration);
+    context->triggerUpdate(Update::DefaultTransitionDuration);
 }
 
 Duration Map::getDefaultTransitionDuration() {
     assert(Environment::currentlyOn(ThreadType::Main));
     return data->getDefaultTransitionDuration();
-}
-
-#pragma mark - Private
-
-void Map::triggerUpdate(const Update u) {
-    updated |= static_cast<UpdateType>(u);
-
-    if (data->mode == MapMode::Static) {
-        prepare();
-    } else if (asyncUpdate) {
-        asyncUpdate->send();
-    }
-}
-
-void Map::updateAnnotationTiles(const std::vector<TileID>& ids) {
-    assert(Environment::currentlyOn(ThreadType::Main));
-    if (!context->style) return;
-    for (const auto &source : context->style->sources) {
-        if (source->info.type == SourceType::Annotations) {
-            source->invalidateTiles(ids);
-        }
-    }
-    triggerUpdate();
-}
-
-void Map::updateTiles() {
-    assert(Environment::currentlyOn(ThreadType::Map));
-    if (!context->style) return;
-    for (const auto& source : context->style->sources) {
-        source->update(*data, context->getWorker(), context->style, *context->glyphAtlas, *context->glyphStore,
-                       *context->spriteAtlas, context->getSprite(), *context->texturePool, [this]() {
-            assert(Environment::currentlyOn(ThreadType::Map));
-            triggerUpdate();
-        });
-    }
-}
-
-void Map::update() {
-    assert(Environment::currentlyOn(ThreadType::Map));
-
-    if (data->getTransformState().hasSize()) {
-        prepare();
-    }
-}
-
-void Map::reloadStyle() {
-    assert(Environment::currentlyOn(ThreadType::Map));
-
-    context->style = std::make_shared<Style>();
-
-    const auto styleInfo = data->getStyleInfo();
-
-    if (!styleInfo.url.empty()) {
-        const auto base = styleInfo.base;
-        // We have a style URL
-        env->request({ Resource::Kind::JSON, styleInfo.url }, [this, base](const Response &res) {
-            if (res.status == Response::Successful) {
-                loadStyleJSON(res.data, base);
-            } else {
-                Log::Error(Event::Setup, "loading style failed: %s", res.message.c_str());
-            }
-        });
-    } else if (!styleInfo.json.empty()) {
-        // We got JSON data directly.
-        loadStyleJSON(styleInfo.json, styleInfo.base);
-    }
-}
-
-void Map::loadStyleJSON(const std::string& json, const std::string& base) {
-    assert(Environment::currentlyOn(ThreadType::Map));
-
-    context->sprite.reset();
-    context->style = std::make_shared<Style>();
-    context->style->base = base;
-    context->style->loadJSON((const uint8_t *)json.c_str());
-    context->style->cascade(data->getClasses());
-    context->style->setDefaultTransitionDuration(data->getDefaultTransitionDuration());
-
-    const std::string glyphURL = util::mapbox::normalizeGlyphsURL(context->style->glyph_url, getAccessToken());
-    context->glyphStore->setURL(glyphURL);
-
-    for (const auto& source : context->style->sources) {
-        source->load(getAccessToken(), *env, [this]() {
-            assert(Environment::currentlyOn(ThreadType::Map));
-            triggerUpdate();
-        });
-    }
-
-    triggerUpdate(Update::Zoom);
-}
-
-void Map::prepare() {
-    assert(Environment::currentlyOn(ThreadType::Map));
-
-    const auto now = Clock::now();
-    data->setAnimationTime(now);
-
-    auto u = updated.exchange(static_cast<UpdateType>(Update::Nothing)) |
-             data->transform.updateTransitions(now);
-
-    if (!context->style) {
-        u |= static_cast<UpdateType>(Update::StyleInfo);
-    }
-
-    data->setTransformState(data->transform.currentState());
-
-    if (u & static_cast<UpdateType>(Update::StyleInfo)) {
-        reloadStyle();
-    }
-
-    if (u & static_cast<UpdateType>(Update::Debug)) {
-        assert(context->painter);
-        context->painter->setDebug(data->getDebug());
-    }
-
-    if (context->style) {
-        if (u & static_cast<UpdateType>(Update::DefaultTransitionDuration)) {
-            context->style->setDefaultTransitionDuration(data->getDefaultTransitionDuration());
-        }
-
-        if (u & static_cast<UpdateType>(Update::Classes)) {
-            context->style->cascade(data->getClasses());
-        }
-
-        if (u & static_cast<UpdateType>(Update::StyleInfo) ||
-            u & static_cast<UpdateType>(Update::Classes) ||
-            u & static_cast<UpdateType>(Update::Zoom)) {
-            context->style->recalculate(data->getTransformState().getNormalizedZoom(), now);
-        }
-
-        // Allow the sprite atlas to potentially pull new sprite images if needed.
-        context->spriteAtlas->resize(data->getTransformState().getPixelRatio());
-        context->spriteAtlas->setSprite(context->getSprite());
-
-        updateTiles();
-    }
-
-    if (data->mode == MapMode::Continuous) {
-        view.invalidate();
-    }
-}
-
-void Map::render() {
-    assert(Environment::currentlyOn(ThreadType::Map));
-
-    // Cleanup OpenGL objects that we abandoned since the last render call.
-    env->performCleanup();
-
-    assert(context->style);
-    assert(context->painter);
-
-    context->painter->render(*context->style, data->getTransformState(), data->getAnimationTime());
-
-    // Schedule another rerender when we definitely need a next frame.
-    if (data->transform.needsTransition() || context->style->hasTransitions()) {
-        triggerUpdate();
-    }
 }
 
 }
