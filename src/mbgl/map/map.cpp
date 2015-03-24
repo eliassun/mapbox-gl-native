@@ -84,7 +84,7 @@ Map::~Map() {
         "MapandMain");
 
     // Explicitly reset all pointers.
-    style.reset();
+    context->style.reset();
     context.reset();
 
     uv_run(env->loop, UV_RUN_DEFAULT);
@@ -108,7 +108,7 @@ void Map::start(bool startPaused) {
         assert(Environment::currentlyOn(ThreadType::Map));
 
         // Remove all of these to make sure they are destructed in the correct thread.
-        style.reset();
+        context->style.reset();
 
         // It's now safe to destroy/join the workers since there won't be any more callbacks that
         // could dispatch to the worker pool.
@@ -242,7 +242,7 @@ void Map::run() {
 
     auto styleInfo = data->getStyleInfo();
 
-    if (mode == Mode::Static && !style && (styleInfo.url.empty() && styleInfo.json.empty())) {
+    if (mode == Mode::Static && !context->style && (styleInfo.url.empty() && styleInfo.json.empty())) {
         throw util::Exception("Style is not set");
     }
 
@@ -405,7 +405,7 @@ std::string Map::getStyleJSON() const {
 util::ptr<Sprite> Map::getSprite() {
     assert(Environment::currentlyOn(ThreadType::Map));
     const float pixelRatio = data->getTransformState().getPixelRatio();
-    const std::string &sprite_url = style->getSpriteURL();
+    const std::string &sprite_url = context->style->getSpriteURL();
     if (!context->sprite || !context->sprite->hasPixelRatio(pixelRatio)) {
         context->sprite = Sprite::Create(sprite_url, pixelRatio, *env);
     }
@@ -644,8 +644,8 @@ LatLngBounds Map::getBoundsForAnnotations(const std::vector<uint32_t>& annotatio
 
 void Map::updateAnnotationTiles(const std::vector<TileID>& ids) {
     assert(Environment::currentlyOn(ThreadType::Main));
-    if (!style) return;
-    for (const auto &source : style->sources) {
+    if (!context->style) return;
+    for (const auto &source : context->style->sources) {
         if (source->info.type == SourceType::Annotations) {
             source->invalidateTiles(ids);
         }
@@ -708,9 +708,9 @@ Duration Map::getDefaultTransitionDuration() {
 
 void Map::updateTiles() {
     assert(Environment::currentlyOn(ThreadType::Map));
-    if (!style) return;
-    for (const auto& source : style->sources) {
-        source->update(*data, context->getWorker(), style, *context->glyphAtlas, *context->glyphStore,
+    if (!context->style) return;
+    for (const auto& source : context->style->sources) {
+        source->update(*data, context->getWorker(), context->style, *context->glyphAtlas, *context->glyphStore,
                        *context->spriteAtlas, getSprite(), *context->texturePool, [this]() {
             assert(Environment::currentlyOn(ThreadType::Map));
             triggerUpdate();
@@ -729,7 +729,7 @@ void Map::update() {
 void Map::reloadStyle() {
     assert(Environment::currentlyOn(ThreadType::Map));
 
-    style = std::make_shared<Style>();
+    context->style = std::make_shared<Style>();
 
     const auto styleInfo = data->getStyleInfo();
 
@@ -753,16 +753,16 @@ void Map::loadStyleJSON(const std::string& json, const std::string& base) {
     assert(Environment::currentlyOn(ThreadType::Map));
 
     context->sprite.reset();
-    style = std::make_shared<Style>();
-    style->base = base;
-    style->loadJSON((const uint8_t *)json.c_str());
-    style->cascade(data->getClasses());
-    style->setDefaultTransitionDuration(data->getDefaultTransitionDuration());
+    context->style = std::make_shared<Style>();
+    context->style->base = base;
+    context->style->loadJSON((const uint8_t *)json.c_str());
+    context->style->cascade(data->getClasses());
+    context->style->setDefaultTransitionDuration(data->getDefaultTransitionDuration());
 
-    const std::string glyphURL = util::mapbox::normalizeGlyphsURL(style->glyph_url, getAccessToken());
+    const std::string glyphURL = util::mapbox::normalizeGlyphsURL(context->style->glyph_url, getAccessToken());
     context->glyphStore->setURL(glyphURL);
 
-    for (const auto& source : style->sources) {
+    for (const auto& source : context->style->sources) {
         source->load(getAccessToken(), *env, [this]() {
             assert(Environment::currentlyOn(ThreadType::Map));
             triggerUpdate();
@@ -781,7 +781,7 @@ void Map::prepare() {
     auto u = updated.exchange(static_cast<UpdateType>(Update::Nothing)) |
              data->transform.updateTransitions(now);
 
-    if (!style) {
+    if (!context->style) {
         u |= static_cast<UpdateType>(Update::StyleInfo);
     }
 
@@ -796,19 +796,19 @@ void Map::prepare() {
         context->painter->setDebug(data->getDebug());
     }
 
-    if (style) {
+    if (context->style) {
         if (u & static_cast<UpdateType>(Update::DefaultTransitionDuration)) {
-            style->setDefaultTransitionDuration(data->getDefaultTransitionDuration());
+            context->style->setDefaultTransitionDuration(data->getDefaultTransitionDuration());
         }
 
         if (u & static_cast<UpdateType>(Update::Classes)) {
-            style->cascade(data->getClasses());
+            context->style->cascade(data->getClasses());
         }
 
         if (u & static_cast<UpdateType>(Update::StyleInfo) ||
             u & static_cast<UpdateType>(Update::Classes) ||
             u & static_cast<UpdateType>(Update::Zoom)) {
-            style->recalculate(data->getTransformState().getNormalizedZoom(), now);
+            context->style->recalculate(data->getTransformState().getNormalizedZoom(), now);
         }
 
         // Allow the sprite atlas to potentially pull new sprite images if needed.
@@ -829,13 +829,13 @@ void Map::render() {
     // Cleanup OpenGL objects that we abandoned since the last render call.
     env->performCleanup();
 
-    assert(style);
+    assert(context->style);
     assert(context->painter);
 
-    context->painter->render(*style, data->getTransformState(), data->getAnimationTime());
+    context->painter->render(*context->style, data->getTransformState(), data->getAnimationTime());
 
     // Schedule another rerender when we definitely need a next frame.
-    if (data->transform.needsTransition() || style->hasTransitions()) {
+    if (data->transform.needsTransition() || context->style->hasTransitions()) {
         triggerUpdate();
     }
 }
