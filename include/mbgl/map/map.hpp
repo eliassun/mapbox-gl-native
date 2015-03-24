@@ -159,7 +159,6 @@ private:
     void resize(uint16_t width, uint16_t height, float ratio, uint16_t fbWidth, uint16_t fbHeight);
 
     util::ptr<Sprite> getSprite();
-    Worker& getWorker();
 
     // Checks if render thread needs to pause
     void checkForPause();
@@ -203,7 +202,6 @@ private:
     std::unique_ptr<MapContext> context;
 
 private:
-    std::unique_ptr<Worker> workers;
     std::thread thread;
     std::unique_ptr<uv::async> asyncTerminate;
     std::unique_ptr<uv::async> asyncUpdate;
