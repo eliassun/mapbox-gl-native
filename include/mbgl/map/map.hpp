@@ -181,14 +181,6 @@ private:
 
     void updateAnnotationTiles(const std::vector<TileID>&);
 
-    enum class Mode : uint8_t {
-        None, // we're not doing any processing
-        Continuous, // continually updating map
-        Static, // a once-off static image.
-    };
-
-    Mode mode = Mode::None;
-
     const std::unique_ptr<Environment> env;
     std::unique_ptr<EnvironmentScope> scope;
     View &view;
