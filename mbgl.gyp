@@ -10,6 +10,7 @@
     './gyp/none.gypi',
   ],
   'conditions': [
+    ['headless_lib == "glx" and host == "osx"', { 'includes': [ './gyp/headless-glx.gypi' ] } ],
     ['headless_lib == "cgl" and host == "osx"', { 'includes': [ './gyp/headless-cgl.gypi' ] } ],
     ['headless_lib == "glx" and host == "linux"', { 'includes': [ './gyp/headless-glx.gypi' ] } ],
     ['platform_lib == "osx" and host == "osx"', { 'includes': [ './gyp/platform-osx.gypi' ] } ],
