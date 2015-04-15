@@ -1,6 +1,8 @@
 #include <mbgl/map/view.hpp>
 #include <mbgl/map/map.hpp>
 
+#include <cassert>
+
 namespace mbgl {
 
 void View::initialize(Map *map_) {
