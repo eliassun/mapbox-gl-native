@@ -5,6 +5,9 @@ set -o pipefail
 
 source ./scripts/travis_helper.sh
 
+mapbox_time "install_apt" \
+sudo apt-get install mesa-utils
+
 mapbox_time "checkout_mason" \
 git submodule update --init .mason
 export PATH="`pwd`/.mason:${PATH}" MASON_DIR="`pwd`/.mason"

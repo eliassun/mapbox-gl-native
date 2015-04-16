@@ -31,10 +31,6 @@ export LD_LIBRARY_PATH="`mason prefix mesa 10.4.3`/lib:${LD_LIBRARY_PATH:-}"
 mapbox_time "glxinfo" \
 glxinfo
 
-# add node to PATH for running the test server
-export PATH="`mason prefix node 0.10.35`/bin":"$PATH"
-
-
 ################################################################################
 # Now build
 ################################################################################
@@ -50,9 +46,6 @@ make test -j${JOBS} BUILDTYPE=${BUILDTYPE}
 
 mapbox_time "checkout_test_suite" \
 git submodule update --init test/suite
-
-mapbox_time "install_node" \
-mason install node 0.10.35
 
 mapbox_time "run_tests" \
 make test-* -j${JOBS} BUILDTYPE=${BUILDTYPE}
