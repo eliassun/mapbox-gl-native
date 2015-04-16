@@ -6,7 +6,9 @@ set -o pipefail
 source ./scripts/travis_helper.sh
 
 mapbox_time "install_apt" \
-sudo apt-get install mesa-utils libboost-dev
+sudo apt-get install mesa-utils libboost-dev libxi-dev x11proto-randr-dev \
+    x11proto-xext-dev libxrandr-dev x11proto-xf86vidmode-dev libxxf86vm-dev \
+    libxcursor-dev libxinerama-dev
 
 mapbox_time "checkout_mason" \
 git submodule update --init .mason
