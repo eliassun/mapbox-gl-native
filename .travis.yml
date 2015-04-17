@@ -5,11 +5,18 @@ matrix:
     - os: linux
   include:
     - os: linux
-      env: FLAVOR=linux CXX=g++ BUILDTYPE=Release JOBS=4
+      env: FLAVOR=linux CXX=g++ BUILDTYPE=Release
     - os: linux
-      env: FLAVOR=linux CXX=clang++ BUILDTYPE=Debug JOBS=4
+      env: FLAVOR=linux CXX=clang++ BUILDTYPE=Debug
     - os: linux
-      env: FLAVOR=linux CXX=clang++ BUILDTYPE=Release JOBS=4
+      env: FLAVOR=linux CXX=clang++ BUILDTYPE=Release
+    - os: linux
+      env: FLAVOR=android ANDROID_ABI=arm-v7 BUILDTYPE=Release
+      android:
+        components:
+          - build-tools-22.0.0
+          - android-22
+          - extra
 
 before_install:
 - ./scripts/${FLAVOR}/install.sh

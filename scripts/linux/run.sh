@@ -4,7 +4,7 @@ set -e
 set -o pipefail
 
 BUILDTYPE=${BUILDTYPE:-Release}
-if [[ -z $JOBS ]]; then JOBS=`nproc` ; fi
+export JOBS=$((`nproc` + 2))
 echo Using ${JOBS} parallel jobs
 
 source ./scripts/travis_helper.sh
