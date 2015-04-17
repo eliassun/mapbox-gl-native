@@ -5,15 +5,19 @@ set -o pipefail
 
 BUILDTYPE=${BUILDTYPE:-Release}
 JOBS=$((`nproc` + 2))
+echo Using ${JOBS} parallel jobs
 
 source ./scripts/travis_helper.sh
 
 # Add Mason to PATH
-export PATH="`pwd`/.mason:${PATH}"
-export MASON_DIR="`pwd`/.mason"
+export PATH="`pwd`/.mason:${PATH}" MASON_DIR="`pwd`/.mason"
 
 # Set the core file limit to unlimited so a core file is generated upon crash
 ulimit -c unlimited -S
+
+################################################################################
+# X Server setup
+################################################################################
 
 # Start the mock X server
 if [ -f /etc/init.d/xvfb ] ; then
@@ -32,7 +36,7 @@ mapbox_time "glxinfo" \
 glxinfo
 
 ################################################################################
-# Now build
+# Build
 ################################################################################
 
 mapbox_time "checkout_styles" \
@@ -44,14 +48,22 @@ make linux -j${JOBS} BUILDTYPE=${BUILDTYPE}
 mapbox_time "compile_tests" \
 make test -j${JOBS} BUILDTYPE=${BUILDTYPE}
 
+################################################################################
+# Test
+################################################################################
+
 mapbox_time "checkout_test_suite" \
 git submodule update --init test/suite
 
 mapbox_time "run_tests" \
-make test-* -j${JOBS} BUILDTYPE=${BUILDTYPE}
+make test-* BUILDTYPE=${BUILDTYPE}
 
 mapbox_time "compare_results" \
 ./scripts/compare_images.sh
+
+################################################################################
+# Deploy
+################################################################################
 
 if [ ! -z "${AWS_ACCESS_KEY_ID}" ] && [ ! -z "${AWS_SECRET_ACCESS_KEY}" ] ; then
     # Install and add awscli to PATH for uploading the results
