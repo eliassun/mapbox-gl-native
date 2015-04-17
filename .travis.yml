@@ -11,21 +11,35 @@ matrix:
     - os: linux
       env: FLAVOR=linux CXX=clang++ BUILDTYPE=Release
     - os: linux
-      env: FLAVOR=android ANDROID_ABIS="arm-v7 arm-v8" BUILDTYPE=Release
+      env: FLAVOR=android ANDROID_ABI=arm-v7 BUILDTYPE=Release
       android:
         components:
           - build-tools-22.0.0
           - android-22
           - extra
     - os: linux
-      env: FLAVOR=android ANDROID_ABIS="x86 x86-64" BUILDTYPE=Release
+      env: FLAVOR=android ANDROID_ABI=arm-v7 BUILDTYPE=Debug
       android:
         components:
           - build-tools-22.0.0
           - android-22
           - extra
     - os: linux
-      env: FLAVOR=android ANDROID_ABIS="mips mips-64" BUILDTYPE=Release
+      env: FLAVOR=android ANDROID_ABI=arm-v8 BUILDTYPE=Release
+      android:
+        components:
+          - build-tools-22.0.0
+          - android-22
+          - extra
+    - os: linux
+      env: FLAVOR=android ANDROID_ABI=x86 BUILDTYPE=Release
+      android:
+        components:
+          - build-tools-22.0.0
+          - android-22
+          - extra
+    - os: linux
+      env: FLAVOR=android ANDROID_ABI=mips BUILDTYPE=Release
       android:
         components:
           - build-tools-22.0.0

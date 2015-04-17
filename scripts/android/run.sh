@@ -24,13 +24,8 @@ git submodule update --init styles
 mkdir -p ./android/java/MapboxGLAndroidSDKTestApp/src/main/res/raw
 echo "${MAPBOX_ACCESS_TOKEN}" > ./android/java/MapboxGLAndroidSDKTestApp/src/main/res/raw/token.txt
 
-for ABI in ${ANDROID_ABIS:-arm-v7} ; do
-    export ANDROID_ABI=${ABI}
-    export MASON_ANDROID_ABI=${ANDROID_ABI}
-
-    mapbox_time "compile_library" \
-    make android-lib -j${JOBS} BUILDTYPE=${BUILDTYPE} ANDROID_ABI=${ABI}
-done
+mapbox_time "compile_library" \
+make android-lib -j${JOBS} BUILDTYPE=${BUILDTYPE}
 
 mapbox_time "build_apk" \
 make android -j${JOBS} BUILDTYPE=${BUILDTYPE}
