@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
 case `uname -s` in
-    'Darwin') JOBS=`sysctl -n hw.ncpu` ;;
-    'Linux')  JOBS=`nproc` ;;
-    *)        JOBS='1' ;;
+    'Darwin') JOBS=$((`sysctl -n hw.ncpu` + 2)) ;;
+    'Linux')  JOBS=$((`nproc` + 2)) ;;
+    *)        JOBS=2 ;;
 esac
 
 function mapbox_time_start {

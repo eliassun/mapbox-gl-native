@@ -5,12 +5,6 @@ set -o pipefail
 
 BUILDTYPE=${BUILDTYPE:-Release}
 TESTMUNK=${TESTMUNK:-no}
-case `uname -s` in
-    'Darwin') export JOBS=$((`sysctl -n hw.ncpu` + 2)) ;;
-    'Linux')  export JOBS=$((`nproc` + 2)) ;;
-    *)        export JOBS=1 ;;
-esac
-echo Using ${JOBS} parallel jobs
 export MASON_PLATFORM=android
 export MASON_ANDROID_ABI=${ANDROID_ABI:-arm-v7}
 
@@ -29,8 +23,16 @@ git submodule update --init styles
 mkdir -p ./android/java/MapboxGLAndroidSDKTestApp/src/main/res/raw
 echo "${MAPBOX_ACCESS_TOKEN}" > ./android/java/MapboxGLAndroidSDKTestApp/src/main/res/raw/token.txt
 
-mapbox_time "compile_program" \
-make android -j${JOBS} BUILDTYPE=${BUILDTYPE} JOBS=${JOBS}
+for ABI in ${ANDROID_ABIS:-arm-v7} ; do
+    export ANDROID_ABI=${ABI}
+    export MASON_ANDROID_ABI=${ANDROID_ABI}
+
+    mapbox_time "compile_library" \
+    make android-lib -j${JOBS} BUILDTYPE=${BUILDTYPE} ANDROID_ABI=${ABI}
+done
+
+mapbox_time "build_apk" \
+make android -j${JOBS} BUILDTYPE=${BUILDTYPE}
 
 ################################################################################
 # Deploy

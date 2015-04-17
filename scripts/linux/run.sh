@@ -4,8 +4,6 @@ set -e
 set -o pipefail
 
 BUILDTYPE=${BUILDTYPE:-Release}
-export JOBS=$((`nproc` + 2))
-echo Using ${JOBS} parallel jobs
 
 source ./scripts/travis_helper.sh
 
@@ -43,7 +41,7 @@ mapbox_time "checkout_styles" \
 git submodule update --init styles
 
 mapbox_time "compile_program" \
-make linux -j${JOBS} BUILDTYPE=${BUILDTYPE} V=1
+make linux -j${JOBS} BUILDTYPE=${BUILDTYPE}
 
 mapbox_time "compile_tests" \
 make test -j${JOBS} BUILDTYPE=${BUILDTYPE}

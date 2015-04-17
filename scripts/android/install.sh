@@ -9,7 +9,10 @@ mapbox_time "checkout_mason" \
 git submodule update --init .mason
 
 export MASON_PLATFORM=android
-export MASON_ANDROID_ABI=${ANDROID_ABI:-arm-v7}
 
-mapbox_time "android_toolchain" \
-./scripts/android/toolchain.sh
+for ABI in ${ANDROID_ABIS:-arm-v7} ; do
+    export ANDROID_ABI=${ABI}
+    export MASON_ANDROID_ABI=${ANDROID_ABI}
+    mapbox_time "android_toolchain" \
+    ./scripts/android/toolchain.sh
+done
