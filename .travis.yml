@@ -6,6 +6,10 @@ matrix:
   include:
     - os: linux
       env: FLAVOR=linux CXX=g++ BUILDTYPE=Release JOBS=4
+    - os: linux
+      env: FLAVOR=linux CXX=clang++ BUILDTYPE=Debug JOBS=4
+    - os: linux
+      env: FLAVOR=linux CXX=clang++ BUILDTYPE=Release JOBS=4
 
 before_install:
 - ./scripts/${FLAVOR}/install.sh
