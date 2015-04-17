@@ -25,8 +25,12 @@ config/%.gypi: configure
 styles/styles:
 	git submodule update --init styles
 
+ifeq ($(shell uname -s), Darwin)
 SMCalloutView:
 	git submodule update --init platform/ios/vendor/SMCalloutView
+else
+SMCalloutView:
+endif
 
 #### Library builds ############################################################
 

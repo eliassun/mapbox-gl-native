@@ -5,6 +5,7 @@ set -o pipefail
 
 BUILDTYPE=${BUILDTYPE:-Release}
 TESTMUNK=${TESTMUNK:-no}
+export HOST=android
 export MASON_PLATFORM=android
 export MASON_ANDROID_ABI=${ANDROID_ABI:-arm-v7}
 
